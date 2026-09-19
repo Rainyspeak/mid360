@@ -1,0 +1,8 @@
+<launch>
+<!-- VINS 里程计 -> mavros vision_pose 纯转发(无杆臂/零漂修正) -->
+<!-- 需先启动 VINS(rosrun vins vins_node xxx.yaml 或对应 launch) 和 mavros -->
+<node name="vins_to_mavros" pkg="lidar_to_mavros" type="vins_to_mavros" output="screen">
+    <!-- VINS-Mono/VINS-Fusion 里程计话题 -->
+    <param name="vins_odom_topic" type="string" value="/vins_estimator/odometry" />
+</node>
+</launch>
