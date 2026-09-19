@@ -69,6 +69,32 @@ FAST-LIO (/Odometry, 约10Hz)
 mavros/vision_pose/pose (publish_rate 高频外推发布, 发送给飞控)
 ```
 
+## 远程可视化 (Foxglove，替代机上 RViz)
+
+机上不跑 RViz（launch 中默认已关闭），改跑轻量的 `foxglove_bridge` WebSocket 桥，地面站用 Foxglove Studio 远程查看。桥只转发地面站**实际订阅**的话题，未订阅时零带宽占用，机上 CPU 开销可忽略。
+
+**机载电脑（一次性安装）**：
+```bash
+sudo apt install ros-noetic-foxglove-bridge
+```
+
+**地面站（Windows/Mac/Linux）**：从 https://foxglove.dev/download 安装 Foxglove Studio。
+
+**连接**：启动 `lidar_to_mavros.launch` 后（已默认包含 foxglove_bridge），在 Foxglove Studio 中
+`Open Connection → Foxglove WebSocket → ws://<机载电脑IP>:8765`。
+
+**常用话题与带宽建议**（WiFi 下注意控制点云流量）：
+
+| 话题 | 内容 | 带宽 |
+|------|------|------|
+| `/Odometry` | 位姿（10Hz） | 很小，随便看 |
+| `/cloud_registered_body` | 机体坐标系配准点云 | 中，推荐的点云视图 |
+| `/cloud_registered` | 世界坐标系配准点云 | 中 |
+| `/livox/lidar` | 原始点云 | **大，WiFi 下不建议订阅** |
+| `/mount_tilt_rpy` | 安装角估计（锁定值） | 很小 |
+
+进一步降带宽：把 `mid360.yaml` 的 `dense_publish_en` 设为 `false`（发布前抽稀点云），或在 Foxglove 面板设置里降低刷新率。视觉对齐调试建议用 3D 面板 + `/Odometry` + `/cloud_registered_body`，同屏开 Plot 面板画 `/Odometry` 的 position 分量与 `mavros/local_position/pose` 对比。
+
 ## 启动示例
 
 ```bash

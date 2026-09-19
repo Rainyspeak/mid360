@@ -1,0 +1,11 @@
+<launch>
+<!-- Foxglove WebSocket 桥: 地面站用 Foxglove Studio 远程连接可视化, 替代机上 RViz -->
+<!-- 连接地址: ws://<机载电脑IP>:8765 -->
+<!-- 仅转发地面站实际订阅的话题, 未订阅时不占带宽; 机上开销可忽略 -->
+<arg name="port" default="8765" />
+<arg name="address" default="0.0.0.0" />
+<node pkg="foxglove_bridge" type="foxglove_bridge" name="foxglove_bridge" output="screen">
+    <param name="port" type="int" value="$(arg port)" />
+    <param name="address" type="string" value="$(arg address)" />
+</node>
+</launch>

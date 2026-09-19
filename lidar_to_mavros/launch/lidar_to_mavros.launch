@@ -23,5 +23,8 @@
     <param name="kf_max_rejects"             type="int"    value="15" />    <!-- 连续拒收上限, 超过后重置跟随真实大位移 -->
     <param name="kf_extrap_max"              type="double" value="0.5" />   <!-- 丢帧时最大外推时长(s) -->
 </node>
+<!-- Foxglove 远程可视化: 机上跑轻量WebSocket桥, 地面站 Foxglove Studio 连 ws://<机载IP>:8765 -->
+<arg name="foxglove_en" default="true" />
+<include if="$(arg foxglove_en)" file="$(find lidar_to_mavros)/launch/foxglove.launch" />
 </launch>
 
