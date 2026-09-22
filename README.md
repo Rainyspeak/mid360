@@ -28,8 +28,9 @@ mkdir -p ~/catkin_ws/src && cd ~/catkin_ws/src
 git clone <本仓库地址> mid_livox
 cd ~/catkin_ws
 
-catkin config --cmake-args -DROS_EDITION=ROS1   # 必须！否则 fast_lio 报 CustomMsg.h 找不到
-catkin build livox_ros_driver2 fast_lio lidar_to_mavros
+# 官方 build.sh 的用法是 ./build.sh ROS1 → catkin_make -DROS_EDITION=ROS1
+# 这里等价换成 catkin build 直接传 ROS 版本；不传 -DROS_EDITION=ROS1 则 fast_lio 报 CustomMsg.h 找不到
+catkin build livox_ros_driver2 fast_lio lidar_to_mavros --cmake-args -DROS_EDITION=ROS1
 source devel/setup.bash
 ```
 
