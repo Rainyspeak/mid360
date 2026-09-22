@@ -30,10 +30,7 @@ find_package(Eigen3 REQUIRED)
 ## CATKIN_DEPENDS: catkin_packages dependent projects also need
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
-INCLUDE_DIRS include
-LIBRARIES lidar_to_mavros
 CATKIN_DEPENDS roscpp nav_msgs geometry_msgs
-DEPENDS Eigen3
 )
 
 ###########
@@ -43,9 +40,8 @@ DEPENDS Eigen3
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
 include_directories(
-include
 ${catkin_INCLUDE_DIRS}
-${EIGEN3_INCLUDE_DIRS}
+${EIGEN3_INCLUDE_DIR}
 )
 
 ## Declare a C++ executable

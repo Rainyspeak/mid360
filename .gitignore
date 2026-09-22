@@ -6,6 +6,9 @@ logs/
 log/
 .catkin_tools/
 
+# livox 驱动由 package_ROS1.xml 复制生成,不入库
+livox_ros_driver2/package.xml
+
 # ===== 运行时输出 =====
 *.pcd
 PCD/

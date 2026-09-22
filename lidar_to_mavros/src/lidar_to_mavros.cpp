@@ -326,13 +326,15 @@ vision_pose::vision_pose(const ros::NodeHandle &nh_, const ros::NodeHandle &nh_p
     pi = 3.1415926;
 
     // 发布频率: 上限100Hz(PX4 EKF2对外部视觉的有效带宽约30-50Hz, 更高只增加流量无收益)
-    double publish_rate_hz = 100.0;
+    double publish_rate_hz = 50.0;
     nh_private.param("publish_rate", publish_rate_hz, 100.0);
     rate = new ros::Rate(publish_rate_hz);
-    ROS_INFO("[lidar_to_mavros] publish rate = %.1f Hz", publish_rate_hz);
+    //ROS_INFO("[lidar_to_mavros] publish rate = %.1f Hz", publish_rate_hz);
 
     px4Pose_sub = nh.subscribe<geometry_msgs::PoseStamped>("mavros/local_position/pose", 10, &vision_pose::px4Pose_cb, this);
+    
     odom_sub = nh.subscribe<nav_msgs::Odometry>("/Odometry", 2, &vision_pose::estimator_odom_cb, this);
+
     vision_pose_pub = nh.advertise<geometry_msgs::PoseStamped>("mavros/vision_pose/pose", 10);
 
     estimatedOdomRec_flag = false;
