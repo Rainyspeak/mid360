@@ -14,7 +14,7 @@
     <param name="lidar_offset_y"             type="double" value="0.0" />
     <param name="lidar_offset_z"             type="double" value="0.09" />
     <!-- 输出层位置EKF: 里程计(10Hz)更新+高频预测输出, 平滑阶梯位置并剔除野值; 姿态不受影响 -->
-    <!-- 发布频率100Hz为上限: PX4 EKF2对外部视觉的有效带宽约30-50Hz, 更高无收益 -->
+    <!-- 发布频率100Hz为上限: PX4 EKF2对外部视觉的有效带宽约30-50Hz -->
     <param name="publish_rate"               type="double" value="100.0" />
     <param name="kf_en"                      type="bool"   value="true" />
     <param name="kf_sigma_a"                 type="double" value="2.0" />   <!-- 过程噪声(m/s^2): 调小更平滑, 调大更紧跟测量 -->
@@ -23,8 +23,4 @@
     <param name="kf_max_rejects"             type="int"    value="15" />    <!-- 连续拒收上限, 超过后重置跟随真实大位移 -->
     <param name="kf_extrap_max"              type="double" value="0.5" />   <!-- 丢帧时最大外推时长(s) -->
 </node>
-<!-- Foxglove 远程可视化: 机上跑轻量WebSocket桥, 地面站 Foxglove Studio 连 ws://<机载IP>:8765 -->
-<arg name="foxglove_en" default="true" />
-<include if="$(arg foxglove_en)" file="$(find lidar_to_mavros)/launch/foxglove.launch" />
 </launch>
-
