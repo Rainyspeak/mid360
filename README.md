@@ -29,7 +29,9 @@ git clone <本仓库地址> mid_livox
 cd ~/catkin_ws
 
 
-catkin build --cmake-args -DROS_EDITION=ROS1
+# 未传 ROS_EDITION 时默认按 ROS1 构建，两种写法均可：
+catkin build --cmake-args -DROS_EDITION=ROS1   # 显式传参（等价）
+catkin build                                    # 裸构建（自动默认 ROS1）
 source devel/setup.bash
 ```
 

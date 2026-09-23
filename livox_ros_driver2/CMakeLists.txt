@@ -1,4 +1,10 @@
-# judge which cmake codes to use 
+# judge which cmake codes to use
+# 未显式传 -DROS_EDITION 时默认 ROS1（本仓库固定部署在 noetic），
+# 避免新机器上裸 catkin build 误入 ROS2 分支后 fast_lio 找不到 CustomMsg.h。
+if(NOT DEFINED ROS_EDITION)
+  set(ROS_EDITION ROS1)
+  message(STATUS "ROS_EDITION not set, defaulting to ROS1")
+endif()
 if(ROS_EDITION STREQUAL "ROS1")
 
   # Copyright(c) 2019 livoxtech limited.

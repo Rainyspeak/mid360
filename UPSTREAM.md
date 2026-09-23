@@ -15,7 +15,7 @@ lidar_to_mavros/ 为自研包，无上游。
 主要本地改动：
 
 - **fast_lio**：livox_ros_driver2 消息类型迁移（preprocess.*）；重力自适应安装角估计与输出层倾角校正（IMU_Processing.hpp、laserMapping.cpp，含 5 秒质量门控初始化与 /mount_tilt_rpy 话题）。
-- **livox_ros_driver2**：MID360_config.json 雷达外参配置、build.sh 适配。
+- **livox_ros_driver2**：MID360_config.json 雷达外参配置、build.sh 适配；CMakeLists 顶部新增 ROS_EDITION 缺省值（未传参时默认 ROS1，防止新机器裸 `catkin build` 误入 ROS2 分支导致 fast_lio 报 `livox_ros_driver2/CustomMsg.h` 不存在）。
 - **lidar_to_mavros**：零漂校准、杆臂补偿、输出层位置 EKF（100Hz 高频预测输出 + 马氏门限剔野值）。
 
 ## Linux 部署编译
