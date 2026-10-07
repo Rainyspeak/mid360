@@ -50,7 +50,7 @@ struct LeverArmCompensator
 };
 
 // 输出层位置EKF: 三轴独立的「位置+速度」匀速(CV)模型滤波
-// 里程计(约10Hz)到达时做更新, 发布循环外推到当前时刻, 姿态不滤直接透传
+// 里程计(约10Hz)到达时做更新, 发布定时回调(20Hz)外推到当前时刻, 姿态不滤直接透传
 // 收益: 10Hz阶梯位置 -> 高频连续输出; 马氏门限剔除里程计野值; 短时丢帧匀速外推
 struct PoseEKF
 {
@@ -212,16 +212,17 @@ public:
 
     bool estimatedOdomRec_flag;
 
-    ros::Rate *rate;
     ros::NodeHandle nh;
     ros::NodeHandle nh_private;
 
     ros::Subscriber px4Pose_sub;
     ros::Publisher vision_pose_pub;
     ros::Subscriber odom_sub;
+    ros::Timer publish_timer;
 
     void px4Pose_cb(const geometry_msgs::PoseStamped::ConstPtr &msg);
     void estimator_odom_cb(const nav_msgs::Odometry::ConstPtr &msg);
+    void publish_timer_cb(const ros::TimerEvent &event);
     void start();
 
     // ====== 零漂校准 ======
@@ -241,7 +242,7 @@ public:
         double first_x, first_y, first_z;
 
         ZeroDriftCalibrator()
-            : enabled(true), calib_time(2.0), motion_thresh(0.05),
+            : enabled(true), calib_time(0.5), motion_thresh(0.05),
               state(WAITING), count(0),
               sum_x(0), sum_y(0), sum_z(0),
               offset_x(0), offset_y(0), offset_z(0),
@@ -250,7 +251,7 @@ public:
         void load(const ros::NodeHandle &nh_private)
         {
             nh_private.param("zero_drift_calib_en", enabled, true);
-            nh_private.param("zero_drift_calib_time", calib_time, 2.0);
+            nh_private.param("zero_drift_calib_time", calib_time, 0.5);
             nh_private.param("zero_drift_motion_thresh", motion_thresh, 0.05);
             ROS_INFO("[ZeroDrift] calibration=%s, time=%.1fs, motion_thresh=%.2fcm",
                      enabled ? "ON" : "OFF", calib_time, motion_thresh * 100);
@@ -325,17 +326,19 @@ vision_pose::vision_pose(const ros::NodeHandle &nh_, const ros::NodeHandle &nh_p
 {
     pi = 3.1415926;
 
-    // 发布频率: 上限100Hz(PX4 EKF2对外部视觉的有效带宽约30-50Hz, 更高只增加流量无收益)
-    double publish_rate_hz = 50.0;
-    nh_private.param("publish_rate", publish_rate_hz, 100.0);
-    rate = new ros::Rate(publish_rate_hz);
-    //ROS_INFO("[lidar_to_mavros] publish rate = %.1f Hz", publish_rate_hz);
+    // 发布频率: 20Hz即可满足PX4 EKF2融合需求(有效带宽约30-50Hz, 更高只增加流量无收益)
+    double publish_rate_hz = 20.0;
+    nh_private.param("publish_rate", publish_rate_hz, 20.0);
+    ROS_INFO("[lidar_to_mavros] publish rate = %.1f Hz", publish_rate_hz);
 
     px4Pose_sub = nh.subscribe<geometry_msgs::PoseStamped>("mavros/local_position/pose", 10, &vision_pose::px4Pose_cb, this);
-    
+
     odom_sub = nh.subscribe<nav_msgs::Odometry>("/Odometry", 2, &vision_pose::estimator_odom_cb, this);
 
     vision_pose_pub = nh.advertise<geometry_msgs::PoseStamped>("mavros/vision_pose/pose", 10);
+
+    // 定时发布: 里程计回调只做滤波更新, 发布由Timer回调驱动, 主线程ros::spin()挂起
+    publish_timer = nh.createTimer(ros::Duration(1.0 / publish_rate_hz), &vision_pose::publish_timer_cb, this);
 
     estimatedOdomRec_flag = false;
     estimatedAttitude.pitch = estimatedAttitude.roll = estimatedAttitude.yaw = 0;
@@ -360,11 +363,24 @@ void vision_pose::estimator_odom_cb(const nav_msgs::Odometry::ConstPtr &msg)
     estimatedAttitude.roll = roll * 180 / pi;
     estimatedAttitude.yaw = yaw * 180 / pi;
 
-    // 位置EKF更新(姿态透传), 位于零漂校准之前
-    pose_kf.filterPosition(estimatedPose.pose.position, msg->header.stamp.toSec());
-
-    // 零漂校准处理
+    // 零漂校准: 先扣除开机固定误差, 再进EKF, 保证发布/打印的都是扣除后的位置
+    // (若放在EKF之后, 发布时的EKF外推会用校准前的原始轨迹把误差又覆盖回来)
+    const bool was_calibrating = zero_drift.isCalibrating();
     zero_drift.process(estimatedPose);
+    if (was_calibrating && zero_drift.state == ZeroDriftCalibrator::DONE)
+    {
+        // 校准刚完成: EKF重置到扣零后的位置(校准期间静止, 速度置零无损),
+        // 避免拿校准窗口内的原始轨迹继续外推
+        const double z[3] = {estimatedPose.pose.position.x,
+                             estimatedPose.pose.position.y,
+                             estimatedPose.pose.position.z};
+        pose_kf.reset(z, msg->header.stamp.toSec());
+    }
+    else
+    {
+        // 位置EKF更新(姿态透传), 输入为已扣零的位置
+        pose_kf.filterPosition(estimatedPose.pose.position, msg->header.stamp.toSec());
+    }
 
     estimatedOdomRec_flag = true;
 }
@@ -381,97 +397,88 @@ void vision_pose::px4Pose_cb(const geometry_msgs::PoseStamped::ConstPtr &msg)
     px4Attitude.yaw = yaw * 180 / pi;
 }
 
+// 发布定时回调(20Hz): EKF外推到当前时刻 -> 杆臂补偿 -> 发布
+void vision_pose::publish_timer_cb(const ros::TimerEvent &event)
+{
+    static double last_print = 0.0;
+
+    double now_sec = ros::Time::now().toSec();
+
+    // 控制台打印限频至2Hz, 避免高频回调下终端IO拖累CPU
+    bool do_print = (now_sec - last_print) >= 0.5;
+    if (do_print) last_print = now_sec;
+
+    if (estimatedOdomRec_flag == false)
+    {
+        if (do_print)
+            cout << "\033[K"
+                 << "\033[31m visionPose no receive!!!  Waiting for pose\033[0m" << endl;
+        return;
+    }
+
+    // 校准中不发布，显示进度
+    if (zero_drift.isCalibrating())
+    {
+        if (do_print)
+        {
+            printf("\033[K\033[33m [ZeroDrift] Calibrating... %.1f/%.1fs (keep STATIC)\033[0m\n",
+                   zero_drift.elapsed(), zero_drift.calib_time);
+            printf("\033[1A");
+            fflush(stdout);
+        }
+        return;
+    }
+
+    if (zero_drift.isFailed() && do_print)
+    {
+        printf("\033[K\033[31m [ZeroDrift] FAILED! Outputting raw (uncorrected) data. Restart to retry.\033[0m\n");
+        fflush(stdout);
+    }
+
+    // 正常运行(含校准失败透传): EKF外推 -> 杆臂补偿 -> 发布
+    geometry_msgs::PoseStamped out_pose = estimatedPose;
+    double stamp_sec = out_pose.header.stamp.toSec();
+    if (pose_kf.enabled && pose_kf.initialized)
+        pose_kf.extrapolateTo(now_sec, out_pose.pose.position, stamp_sec);
+    out_pose.header.stamp = ros::Time().fromSec(stamp_sec);
+
+    lever_arm.apply(out_pose);
+    vision_pose_pub.publish(out_pose);
+
+    if (!do_print) return;
+
+    if (!zero_drift.isFailed())
+    {
+        cout << "\033[K"
+             << "\033[32m estimate ok !\033[0m" << endl;
+        cout << "\033[K"
+             << "       Vision-Pose               Px4-Pose" << endl;
+        cout << setiosflags(ios::fixed) << setprecision(7)
+             << "\033[K"
+             << "x      " << out_pose.pose.position.x << "\t\t" << px4Pose.pose.position.x << endl;
+        cout << setiosflags(ios::fixed) << setprecision(7)
+             << "\033[K"
+             << "y      " << out_pose.pose.position.y << "\t\t" << px4Pose.pose.position.y << endl;
+        cout << setiosflags(ios::fixed) << setprecision(7)
+             << "\033[K"
+             << "z      " << out_pose.pose.position.z << "\t\t" << px4Pose.pose.position.z << endl;
+        cout << setiosflags(ios::fixed) << setprecision(7)
+             << "\033[K"
+             << "pitch  " << estimatedAttitude.pitch << "\t\t" << px4Attitude.pitch << endl;
+        cout << setiosflags(ios::fixed) << setprecision(7)
+             << "\033[K"
+             << "roll   " << estimatedAttitude.roll << "\t\t" << px4Attitude.roll << endl;
+        cout << setiosflags(ios::fixed) << setprecision(7)
+             << "\033[K"
+             << "yaw    " << estimatedAttitude.yaw << "\t\t" << px4Attitude.yaw << endl;
+        cout << "\033[9A" << endl;
+    }
+}
+
 void vision_pose::start()
 {
-    double last_print = 0.0;
-
-    while (ros::ok())
-    {
-        double now_sec = ros::Time::now().toSec();
-
-        // 控制台打印限频至2Hz, 避免高频发布循环下终端IO拖累CPU
-        bool do_print = (now_sec - last_print) >= 0.5;
-        if (do_print) last_print = now_sec;
-
-        if (estimatedOdomRec_flag == false)
-        {
-            if (do_print)
-                cout << "\033[K"
-                     << "\033[31m visionPose no receive!!!  Waiting for pose\033[0m" << endl;
-        }
-        else
-        {
-            // 校准中不发布，显示进度
-            if (zero_drift.isCalibrating())
-            {
-                if (do_print)
-                {
-                    printf("\033[K\033[33m [ZeroDrift] Calibrating... %.1f/%.1fs (keep STATIC)\033[0m\n",
-                           zero_drift.elapsed(), zero_drift.calib_time);
-                    printf("\033[1A");
-                    fflush(stdout);
-                }
-            }
-            else if (zero_drift.isFailed())
-            {
-                if (do_print)
-                {
-                    printf("\033[K\033[31m [ZeroDrift] FAILED! Outputting raw (uncorrected) data. Restart to retry.\033[0m\n");
-                    fflush(stdout);
-                }
-
-                geometry_msgs::PoseStamped out_pose = estimatedPose;
-                double stamp_sec = out_pose.header.stamp.toSec();
-                if (pose_kf.enabled && pose_kf.initialized)
-                    pose_kf.extrapolateTo(now_sec, out_pose.pose.position, stamp_sec);
-                out_pose.header.stamp = ros::Time().fromSec(stamp_sec);
-
-                lever_arm.apply(out_pose);
-                vision_pose_pub.publish(out_pose);
-            }
-            else
-            {
-                // 正常运行: EKF外推到当前时刻 -> 杠臂补偿 -> 发布
-                geometry_msgs::PoseStamped out_pose = estimatedPose;
-                double stamp_sec = out_pose.header.stamp.toSec();
-                if (pose_kf.enabled && pose_kf.initialized)
-                    pose_kf.extrapolateTo(now_sec, out_pose.pose.position, stamp_sec);
-                out_pose.header.stamp = ros::Time().fromSec(stamp_sec);
-
-                lever_arm.apply(out_pose);
-                vision_pose_pub.publish(out_pose);
-
-                if (do_print)
-                {
-                    cout << "\033[K"
-                         << "\033[32m estimate ok !\033[0m" << endl;
-                    cout << "\033[K"
-                         << "       Vision-Pose               Px4-Pose" << endl;
-                    cout << setiosflags(ios::fixed) << setprecision(7)
-                         << "\033[K"
-                         << "x      " << out_pose.pose.position.x << "\t\t" << px4Pose.pose.position.x << endl;
-                    cout << setiosflags(ios::fixed) << setprecision(7)
-                         << "\033[K"
-                         << "y      " << out_pose.pose.position.y << "\t\t" << px4Pose.pose.position.y << endl;
-                    cout << setiosflags(ios::fixed) << setprecision(7)
-                         << "\033[K"
-                         << "z      " << out_pose.pose.position.z << "\t\t" << px4Pose.pose.position.z << endl;
-                    cout << setiosflags(ios::fixed) << setprecision(7)
-                         << "\033[K"
-                         << "pitch  " << estimatedAttitude.pitch << "\t\t" << px4Attitude.pitch << endl;
-                    cout << setiosflags(ios::fixed) << setprecision(7)
-                         << "\033[K"
-                         << "roll   " << estimatedAttitude.roll << "\t\t" << px4Attitude.roll << endl;
-                    cout << setiosflags(ios::fixed) << setprecision(7)
-                         << "\033[K"
-                         << "yaw    " << estimatedAttitude.yaw << "\t\t" << px4Attitude.yaw << endl;
-                    cout << "\033[9A" << endl;
-                }
-            }
-        }
-        ros::spinOnce();
-        rate->sleep();
-    }
+    // 回调驱动: 里程计回调更新滤波, Timer回调发布, 无需忙轮询
+    ros::spin();
     cout << "\033[9B" << endl;
 }
 

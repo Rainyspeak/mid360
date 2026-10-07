@@ -16,7 +16,7 @@ mapping:
     b_acc_cov: 0.000035
     b_gyr_cov: 0.000035
     gravity_align_mount_en: true  # 静止初始化时根据重力自动估计安装 roll/pitch 并调平(yaw 保持雷达朝向)
-    imu_init_duration: 5.0       # 初始化期间必须保持机体处于正常停放姿态且静止
+    imu_init_duration: 1.0       # 初始化期间必须保持机体处于正常停放姿态且静止(200Hz IMU下1s=200样本, 重力方向估计误差约0.02度)
     imu_init_expected_acc_norm: 1.0 # MID360 原始 IMU 静止加速度模长，单位为 g
     imu_init_acc_norm_tolerance: 0.1 # 平均加速度模长相对期望值的最大偏差，单位为 g
     imu_init_max_gyr_norm: 0.05   # 平均角速度模长上限，单位为 rad/s，用于排除持续转动

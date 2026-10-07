@@ -5,15 +5,15 @@
 该节点负责将 FAST-LIO 输出的雷达里程计数据转换为飞控可用的视觉位姿数据，包含三个核心功能：
 
 ### 1. 位置 EKF 滤波 (Pose EKF)
-三轴独立的「位置+速度」匀速(CV)模型卡尔曼滤波：里程计(约10Hz)到达时做更新，发布循环外推到当前时刻输出。**姿态不滤，直接透传**。
+三轴独立的「位置+速度」匀速(CV)模型卡尔曼滤波：里程计(约10Hz)到达时做更新，发布定时回调(20Hz)外推到当前时刻输出。**姿态不滤，直接透传**。
 
 **作用**：
-- 10Hz 阶梯位置 → 高频连续平滑输出
+- 10Hz 阶梯位置 → 连续平滑输出
 - 马氏门限剔除里程计野值跳变（瞬时野值匀速滑行过渡，连续拒收超限自动重置跟随真实大位移）
 - 里程计短时丢帧时匀速外推补齐
 
 **参数配置**：
-- `publish_rate`: 发布频率/Hz (默认: 100.0)。100Hz 为上限：PX4 EKF2 对外部视觉的有效带宽约 30-50Hz，更高只增加链路流量无收益
+- `publish_rate`: 发布频率/Hz (默认: 20.0)。20Hz 即可满足 PX4 EKF2 融合需求（有效带宽约 30-50Hz，更高只增加链路流量无收益）
 - `kf_en`: 是否启用位置 EKF (默认: true)。置 false 且 publish_rate=30 即恢复旧版行为
 - `kf_sigma_a`: 过程噪声，加速度白噪声 (m/s²，默认: 2.0)。调小更平滑（滞后增大），调大更紧跟测量
 - `kf_sigma_r`: 观测噪声，位置测量 std (m，默认: 0.03)，按里程计位置噪声水平设置
@@ -26,7 +26,7 @@
 
 **参数配置**：
 - `zero_drift_calib_en`: 是否启用零漂校准 (默认: true)
-- `zero_drift_calib_time`: 校准时长/秒 (默认: 2.0)
+- `zero_drift_calib_time`: 校准时长/秒 (默认: 0.5，10Hz 里程计下取 5 个样本求均值)
 - `zero_drift_motion_thresh`: 运动检测阈值/米 (默认: 0.05)
 
 **校准流程**：
@@ -60,13 +60,13 @@
 ```
 FAST-LIO (/Odometry, 约10Hz)
     ↓
-位置 EKF (更新+剔野值, 姿态透传)
-    ↓
 零漂校准 (减去开机零点偏移)
+    ↓
+位置 EKF (更新+剔野值, 姿态透传; 发布时外推)
     ↓
 杠杆臂补偿 (雷达位置 → 飞控位置)
     ↓
-mavros/vision_pose/pose (publish_rate 高频外推发布, 发送给飞控)
+mavros/vision_pose/pose (20Hz 定时回调外推发布, 发送给飞控)
 ```
 
 ## 远程可视化 (Foxglove，替代机上 RViz)
@@ -107,7 +107,7 @@ roslaunch lidar_to_mavros lidar_to_mavros.launch
 <node name="lidar_to_mavros" pkg="lidar_to_mavros" type="lidar_to_mavros" output="screen">
     <!-- 零漂校准 -->
     <param name="zero_drift_calib_en" value="true"/>
-    <param name="zero_drift_calib_time" value="2.0"/>
+    <param name="zero_drift_calib_time" value="0.5"/>
     <param name="zero_drift_motion_thresh" value="0.05"/>
     
     <!-- 杠杆臂补偿 (根据实际安装测量) -->
@@ -127,8 +127,8 @@ roslaunch lidar_to_mavros lidar_to_mavros.launch
 
 ## 注意事项
 
-- **开机静止**：启用零漂校准时，开机后必须保持飞机静止2秒
+- **开机静止**：启用零漂校准时，开机后必须保持飞机静止约0.5秒（FAST-LIO 的 IMU 初始化另需约1秒静止，全程保持静止即可；若日志出现 `IMU initialization rejected` 说明检测到振动，静止窗口会自动重新累计）
 - **参数精度**：杠杆臂偏移参数需精确测量，误差会导致姿态变化时位置估计漂移
 - **坐标系一致**：确保 FAST-LIO 和飞控使用相同的世界坐标系定义（通常是 ENU）
 - **时间戳变化**：启用 EKF 后发布的时间戳为外推目标时刻（约等于当前时刻），比旧版（沿用雷达帧时间戳，滞后约0.1s+处理延迟）更新鲜。若飞控端位置融合出现抖动，需重调 `EKF2_EV_DELAY`
-- **回退开关**：`kf_en=false` 且 `publish_rate=30` 即完全恢复旧版行为，用于飞行对比测试
+- **回退开关**：`kf_en=false` 即关闭位置滤波（姿态透传不受影响），用于飞行对比测试
